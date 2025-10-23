@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using CarrosApi.Models;
+using CarrosApi.Services;
 
 namespace CarrosApi.Controllers;
 
@@ -7,26 +8,35 @@ namespace CarrosApi.Controllers;
 [Route("api/[controller]")]
 public class CarrosController : ControllerBase
 {
-    // Lista estática para armazenar os carros em memória
-    private static List<Carro> carros = new List<Carro>();
-    private static int proximoId = 1;
+    private readonly ICarroRepository _repository;
+
+    public CarrosController(ICarroRepository repository)
+    {
+        _repository = repository;
+    }
 
     /// <summary>
     /// Retorna todos os carros cadastrados
+    /// Os dados são desserializados do formato binário MessagePack
     /// </summary>
     [HttpGet]
-    public ActionResult<IEnumerable<Carro>> GetCarros()
+    [ResponseCache(Duration = 10, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<IEnumerable<Carro>>> GetCarros()
     {
+        // Executa a operação em uma thread pool para não bloquear a thread de requisição
+        var carros = await Task.Run(() => _repository.ObterTodosCarros());
         return Ok(carros);
     }
 
     /// <summary>
     /// Retorna um carro específico por ID
+    /// Os dados são desserializados do formato binário MessagePack
     /// </summary>
     [HttpGet("{id}")]
-    public ActionResult<Carro> GetCarro(int id)
+    [ResponseCache(Duration = 30, Location = ResponseCacheLocation.Any, VaryByQueryKeys = new[] { "id" })]
+    public async Task<ActionResult<Carro>> GetCarro(int id)
     {
-        var carro = carros.FirstOrDefault(c => c.Id == id);
+        var carro = await Task.Run(() => _repository.ObterCarroPorId(id));
         
         if (carro == null)
         {
@@ -38,9 +48,10 @@ public class CarrosController : ControllerBase
 
     /// <summary>
     /// Adiciona um novo carro
+    /// Os dados recebidos são serializados para formato binário MessagePack antes do armazenamento
     /// </summary>
     [HttpPost]
-    public ActionResult<Carro> PostCarro([FromBody] Carro novoCarro)
+    public async Task<ActionResult<Carro>> PostCarro([FromBody] Carro novoCarro)
     {
         if (novoCarro == null)
         {
@@ -59,14 +70,22 @@ public class CarrosController : ControllerBase
             return BadRequest(new { mensagem = "Ano inválido." });
         }
 
-        // Atribui um ID automático
-        novoCarro.Id = proximoId++;
-        
-        // Adiciona o carro à lista
-        carros.Add(novoCarro);
+        // Adiciona o carro ao repositório (será serializado em formato binário MessagePack)
+        var carroAdicionado = await Task.Run(() => _repository.AdicionarCarro(novoCarro));
         
         // Retorna o carro criado com status 201 Created
-        return CreatedAtAction(nameof(GetCarro), new { id = novoCarro.Id }, novoCarro);
+        return CreatedAtAction(nameof(GetCarro), new { id = carroAdicionado.Id }, carroAdicionado);
+    }
+
+    /// <summary>
+    /// Retorna estatísticas sobre o armazenamento binário MessagePack
+    /// </summary>
+    [HttpGet("stats")]
+    [ResponseCache(Duration = 5, Location = ResponseCacheLocation.Any)]
+    public async Task<ActionResult<StorageStats>> GetStats()
+    {
+        var stats = await Task.Run(() => _repository.ObterEstatisticas());
+        return Ok(stats);
     }
 }
 
